@@ -1,0 +1,469 @@
+// Prisma Schema for Dairy/Yogurt ERP System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER & AUTHENTICATION
+// ============================================
+
+enum UserRole {
+  ADMIN
+  SALESPERSON
+  ACCOUNTANT
+  PRODUCTION
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  email     String?  @unique
+  password  String
+  role      UserRole @default(SALESPERSON)
+  fullName  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sales         Sale[]
+  payments      Payment[]
+  expenses      Expense[]
+  createdBy     String?
+
+  @@map("users")
+}
+
+// ============================================
+// FARMERS & MILK COLLECTION
+// ============================================
+
+model Farmer {
+  id          String   @id @default(uuid())
+  farmerCode  String   @unique
+  name        String
+  phone       String?
+  address     String?
+  email       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  milkCollections MilkCollection[]
+  payments        Payment[]  @relation("FarmerPayments")
+
+  @@map("farmers")
+}
+
+model MilkCollection {
+  id           String   @id @default(uuid())
+  farmerId     String
+  date         DateTime @default(now())
+  quantity     Float    // Liters
+  fat          Float?   // Fat percentage
+  pricePerLiter Float   @default(0)
+  totalAmount  Float
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  farmer       Farmer   @relation(fields: [farmerId], references: [id], onDelete: Cascade)
+
+  @@index([farmerId])
+  @@index([date])
+  @@map("milk_collections")
+}
+
+// ============================================
+// INVENTORY & RAW MATERIALS
+// ============================================
+
+enum InventoryType {
+  RAW_MATERIAL
+  PACKAGING
+  FINISHED_PRODUCT
+}
+
+enum Unit {
+  KG
+  LITERS
+  PIECES
+  BOXES
+}
+
+model InventoryItem {
+  id            String        @id @default(uuid())
+  code          String        @unique
+  name          String
+  type          InventoryType
+  unit          Unit
+  currentStock  Float         @default(0)
+  minStock      Float         @default(0) // Low stock alert threshold
+  pricePerUnit  Float         @default(0)
+  expiryDays    Int?          // For perishable items
+  description   String?
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  stockMovements StockMovement[]
+  recipeItems    RecipeItem[]
+  productionItems ProductionItem[]
+  salesItems     SaleItem[]
+  returnItems    ReturnItem[]
+
+  @@map("inventory_items")
+}
+
+model StockMovement {
+  id            String   @id @default(uuid())
+  inventoryId   String
+  type          String   // IN, OUT, ADJUSTMENT
+  quantity      Float
+  unitPrice     Float?
+  reason        String?
+  referenceId   String?  // Reference to production/sale/etc
+  referenceType String?  // PRODUCTION, SALE, RETURN, etc
+  createdAt     DateTime @default(now())
+
+  // Relations
+  inventory     InventoryItem @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@index([inventoryId])
+  @@index([createdAt])
+  @@map("stock_movements")
+}
+
+// ============================================
+// PRODUCTS & RECIPES
+// ============================================
+
+model Product {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  unitPrice   Float
+  unit        Unit     @default(PIECES)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  recipes     Recipe[]
+  salesItems  SaleItem[]
+  returnItems ReturnItem[]
+
+  @@map("products")
+}
+
+model Recipe {
+  id          String   @id @default(uuid())
+  name        String
+  productId   String
+  description String?
+  yieldQuantity Float  @default(1) // Output quantity from recipe
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  recipeItems RecipeItem[]
+  productions ProductionBatch[]
+
+  @@index([productId])
+  @@map("recipes")
+}
+
+model RecipeItem {
+  id          String   @id @default(uuid())
+  recipeId    String
+  inventoryId String
+  quantity    Float    // Required quantity per recipe unit
+  unit        Unit
+
+  // Relations
+  recipe      Recipe        @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  inventory   InventoryItem @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@index([recipeId])
+  @@map("recipe_items")
+}
+
+// ============================================
+// PRODUCTION
+// ============================================
+
+model ProductionBatch {
+  id              String   @id @default(uuid())
+  batchNumber     String   @unique
+  recipeId        String
+  plannedQuantity Float
+  actualQuantity  Float?
+  status          String   @default("PLANNED") // PLANNED, IN_PROGRESS, COMPLETED, CANCELLED
+  productionDate  DateTime @default(now())
+  completedDate   DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  recipe          Recipe          @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  productionItems ProductionItem[]
+
+  @@index([recipeId])
+  @@index([productionDate])
+  @@map("production_batches")
+}
+
+model ProductionItem {
+  id                String   @id @default(uuid())
+  productionBatchId String
+  inventoryId       String
+  quantityUsed      Float
+  unit              Unit
+  createdAt         DateTime @default(now())
+
+  // Relations
+  productionBatch   ProductionBatch @relation(fields: [productionBatchId], references: [id], onDelete: Cascade)
+  inventory         InventoryItem   @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@index([productionBatchId])
+  @@map("production_items")
+}
+
+// ============================================
+// SALES
+// ============================================
+
+enum SaleStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model Sale {
+  id            String     @id @default(uuid())
+  invoiceNumber String     @unique
+  customerName  String?
+  route         String?    // Sales route
+  status        SaleStatus @default(PENDING)
+  subtotal      Float      @default(0)
+  discount      Float      @default(0)
+  total         Float      @default(0)
+  saleDate      DateTime   @default(now())
+  notes         String?
+  createdById   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // Relations
+  createdBy     User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  saleItems     SaleItem[]
+  payments      Payment[]  @relation("SalePayments")
+  returns       Return[]
+
+  @@index([saleDate])
+  @@index([status])
+  @@map("sales")
+}
+
+model SaleItem {
+  id            String   @id @default(uuid())
+  saleId        String
+  productId     String
+  inventoryId   String?  // For tracking specific inventory item if needed
+  quantity      Float
+  unitPrice     Float
+  discount      Float    @default(0)
+  total         Float
+  createdAt     DateTime @default(now())
+
+  // Relations
+  sale          Sale           @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product       Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventory     InventoryItem? @relation(fields: [inventoryId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@map("sale_items")
+}
+
+// ============================================
+// RETURNS & REPLACEMENTS
+// ============================================
+
+enum ReturnStatus {
+  PENDING
+  REPLACED
+  REFUNDED
+  CANCELLED
+}
+
+model Return {
+  id            String       @id @default(uuid())
+  returnNumber  String       @unique
+  saleId        String?
+  reason        String
+  status        ReturnStatus @default(PENDING)
+  replacementSaleId String?  // If replaced with new sale
+  refundAmount  Float        @default(0)
+  returnDate    DateTime     @default(now())
+  notes         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  sale          Sale?        @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  returnItems   ReturnItem[]
+
+  @@index([returnDate])
+  @@index([status])
+  @@map("returns")
+}
+
+model ReturnItem {
+  id            String   @id @default(uuid())
+  returnId      String
+  productId     String
+  inventoryId   String?  // To restock specific item
+  quantity      Float
+  unitPrice     Float
+  reason        String?
+  createdAt     DateTime @default(now())
+
+  // Relations
+  return        Return        @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventory     InventoryItem? @relation(fields: [inventoryId], references: [id], onDelete: SetNull)
+
+  @@index([returnId])
+  @@map("return_items")
+}
+
+// ============================================
+// PAYMENTS
+// ============================================
+
+enum PaymentMethod {
+  CASH
+  CHEQUE
+  BANK_TRANSFER
+}
+
+enum PaymentType {
+  SALE_PAYMENT
+  FARMER_PAYMENT
+  EXPENSE_PAYMENT
+  OTHER
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  paymentNumber String        @unique
+  type          PaymentType
+  method        PaymentMethod
+  amount        Float
+  paidDate      DateTime      @default(now())
+  notes         String?
+  createdById   String?
+  
+  // References
+  saleId        String?       // If payment for sale
+  farmerId      String?       // If payment to farmer
+  expenseId     String?       // If payment for expense
+  chequeId      String?       // If paid via cheque
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  createdBy     User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  sale          Sale?         @relation("SalePayments", fields: [saleId], references: [id], onDelete: SetNull)
+  farmer        Farmer?       @relation("FarmerPayments", fields: [farmerId], references: [id], onDelete: SetNull)
+  expense       Expense?      @relation("ExpensePayments", fields: [expenseId], references: [id], onDelete: SetNull)
+  cheque        Cheque?       @relation(fields: [chequeId], references: [id], onDelete: SetNull)
+
+  @@index([paidDate])
+  @@index([type])
+  @@map("payments")
+}
+
+// ============================================
+// CHEQUES
+// ============================================
+
+enum ChequeStatus {
+  PENDING
+  CLEARED
+  RETURNED
+  CANCELLED
+}
+
+model Cheque {
+  id            String        @id @default(uuid())
+  chequeNumber  String
+  bankName      String
+  accountNumber String?
+  amount        Float
+  issuedDate    DateTime
+  dueDate       DateTime
+  status        ChequeStatus  @default(PENDING)
+  clearedDate   DateTime?
+  returnedDate  DateTime?
+  returnedReason String?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  payments      Payment[]
+
+  @@index([status])
+  @@index([dueDate])
+  @@map("cheques")
+}
+
+// ============================================
+// EXPENSES
+// ============================================
+
+enum ExpenseCategory {
+  FUEL
+  REPAIRS
+  SALARY
+  UTILITIES
+  MARKETING
+  TRANSPORT
+  OTHER
+}
+
+model Expense {
+  id            String         @id @default(uuid())
+  expenseNumber String         @unique
+  category      ExpenseCategory
+  description   String
+  amount        Float
+  expenseDate   DateTime       @default(now())
+  notes         String?
+  createdById   String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  // Relations
+  createdBy     User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  payments      Payment[]      @relation("ExpensePayments")
+
+  @@index([expenseDate])
+  @@index([category])
+  @@map("expenses")
+}
